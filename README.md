@@ -1,89 +1,156 @@
 # Building a Practice Kubernetes Cluster
 
-## Perform the following on all nodes (master and worker)
+## Prerequisites
+- Distribution: Ubuntu 20.04 Focal Fossa LTS & Size: medium
 
-- Get the Docker gpg key
+- Set appropriate hostnames for each node
 ```
-$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-```
-
-- Add the Docker repository
-```
-$ sudo add-apt-repository    "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-   $(lsb_release -cs) \
-   stable"
+sudo hostnamectl set-hostname k8s-control
+sudo hostnamectl set-hostname k8s-worker1
+sudo hostnamectl set-hostname k8s-worker2
 ```
 
-- Get the Kubernetes gpg key
+## Perfrom on all nodes
+- On all nodes, set up the hosts file to enable all the nodes to reach each other using these hostnames
 ```
-$ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+sudo vi /etc/hosts
 ```
 
-- Add the Kubernetes repository 
+- On all nodes, add the following at the end of the file. You will need to supply the actual private IP address for each node
 ```
-$ cat << EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
-deb https://apt.kubernetes.io/ kubernetes-xenial main
+<control plane node private IP> k8s-control
+<worker node 1 private IP> k8s-worker1
+<worker node 2 private IP> k8s-worker2
+```
+
+- Log out of all three servers and log back in to see these changes take effect
+
+- On all nodes, set up Docker Engine and containerd. You will need to load some kernel modules and modify some system settings as part of this process
+```
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+```
+
+- sysctl params required by setup, params persist across reboots
+```
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
 EOF
 ```
 
-- Update your packages
+- Apply sysctl params without reboot
 ```
-$ sudo apt-get update
-```
-
-- Install Docker, kubelet, kubeadm, and kubectl
-```
-$ sudo apt-get install -y docker-ce=18.06.1~ce~3-0~ubuntu kubelet=1.13.5-00 kubeadm=1.13.5-00 kubectl=1.13.5-00
+sudo sysctl --system
 ```
 
-- Hold them at the current version:
+- Set up the Docker Engine repository
 ```
-sudo apt-mark hold docker-ce kubelet kubeadm kubectl
-```
-
-- Add the iptables rule to sysctl.conf:
-```
-$ echo "net.bridge.bridge-nf-call-iptables=1" | sudo tee -a /etc/sysctl.conf
+sudo apt-get update && sudo apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https
 ```
 
-- Enable iptables immediately:
+- Add Docker’s official GPG key
 ```
-$ sudo sysctl -p
-```
-
-## Perform on the Kube master server only
-
-- Initialize the cluster (run only on the master):
-```
-$ sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+sudo mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 ```
 
-- Set up local kubeconfig:
+- Set up the repository
 ```
-$ mkdir -p $HOME/.kube
-$ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-$ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 ```
 
-- Apply Flannel CNI network overlay:
+- Update the apt package index
 ```
-$ kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+sudo apt-get update
+```
+
+- Install Docker Engine, containerd, and Docker Compose
+```
+VERSION_STRING=5:23.0.1-1~ubuntu.20.04~focal
+sudo apt-get install -y docker-ce=$VERSION_STRING docker-ce-cli=$VERSION_STRING containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+- Add your 'cloud_user' to the docker group
+```
+sudo usermod -aG docker $USER
+```
+
+- Log out and log back in so that your group membership is re-evaluated
+- Make sure that 'disabled_plugins' is commented out in your config.toml file
+```
+sudo sed -i 's/disabled_plugins/#disabled_plugins/' /etc/containerd/config.toml
+```
+
+- Restart containerd
+```
+sudo systemctl restart containerd
+```
+
+- On all nodes, disable swap.
+```
+sudo swapoff -a
+```
+
+- On all nodes, install kubeadm, kubelet, and kubectl
+```
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+
+cat << EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
+deb https://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+
+sudo apt-get update && sudo apt-get install -y kubelet=1.24.0-00 kubeadm=1.24.0-00 kubectl=1.24.0-00
+
+sudo apt-mark hold kubelet kubeadm kubectl
+```
+
+## Perform on the control plane node only
+- Initialize the cluster and set up kubectl access
+```
+sudo kubeadm init --pod-network-cidr 192.168.0.0/16 --kubernetes-version 1.24.0
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+- Verify the cluster is working
+```
+kubectl get nodes
 ```
 
 ## Perform on each of the worker nodes
-
-- Join the node to the cluster:
+- Install the Calico network add-on
 ```
-$ sudo kubeadm join $controller_private_ip:6443 --token $token --discovery-token-ca-cert-hash $hash
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
+```
+
+- Get the join command (this command is also printed during kubeadm init . Feel free to simply copy it from there)
+```
+kubeadm token create --print-join-command
+```
+
+- Copy the join command from the control plane node. Run it on each worker node as root (i.e. with sudo )
+```
+sudo kubeadm join ...
 ```
 
 - Verify that all nodes are joined and ready
 ```
 $ kubectl get nodes
 NAME                    STATUS   ROLES    AGE   VERSION
-node1.example.com   	Ready    master   1m   v1.13.4
-node2.example.com   	Ready    <none>   1m   v1.13.4
-node3.example.com   	Ready    <none>   1m   v1.13.4
+k8s-control.example.com   	Ready    master   1m   v1.13.4
+k8s-worker1.example.com   	Ready    <none>   1m   v1.13.4
+k8s-worker2.example.com   	Ready    <none>   1m   v1.13.4
 ```
 
 ## Run end to end tests
@@ -151,3 +218,7 @@ $ kubectl describe nodes
 ```
 $ kubectl describe pods
 ```
+
+## References
+- Installing kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+- Creating a cluster with kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/
