@@ -14,7 +14,7 @@ sudo hostnamectl set-hostname k8s-worker1
 sudo hostnamectl set-hostname k8s-worker2
 ```
 
-## Perfrom on all nodes
+## Perform on all nodes
 - On all nodes, set up the hosts file to enable all the nodes to reach each other using these hostnames
 ```
 sudo vi /etc/hosts
