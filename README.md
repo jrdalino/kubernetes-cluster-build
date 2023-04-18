@@ -2,6 +2,10 @@
 
 ## Prerequisites
 - Distribution: Ubuntu 20.04 Focal Fossa LTS & Size: medium
+- Docker Engine on Ubuntu: https://docs.docker.com/engine/install/ubuntu/
+- Kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+- Installing kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+- Creating a cluster with kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/
 
 - Set appropriate hostnames for each node
 ```
@@ -218,7 +222,3 @@ $ kubectl describe nodes
 ```
 $ kubectl describe pods
 ```
-
-## References
-- Installing kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
-- Creating a cluster with kubeadm: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/
